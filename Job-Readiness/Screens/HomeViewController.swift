@@ -17,7 +17,6 @@ class HomeViewController: UIViewController {
     
     let identifier = "HomeTableViewCell"
     let viewModel = HomeViewModel()
-//    let delegate: HomeViewControllerProtocol
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -25,9 +24,11 @@ class HomeViewController: UIViewController {
         let nib = UINib(nibName: "HomeTableViewCell", bundle: nil)
         tableView.register(nib, forCellReuseIdentifier: identifier)
         tableView.dataSource = self
+        tableView.delegate = self
         searchBar.delegate = self
         viewModel.delegate = self
-        viewModel.getToken()
+        
+//        viewModel.getToken(target: self)
     }
 }
 
@@ -36,7 +37,8 @@ extension HomeViewController: UISearchBarDelegate {
         guard let category = searchBar.text else {
             return
         }
-        viewModel.searchProducts(category: category)
+        viewModel.searchProducts(category: category, target: self)
+        searchBar.text = String()
     }
 }
 
@@ -58,5 +60,39 @@ extension HomeViewController: UITableViewDataSource {
         let index = indexPath.row
         cell.updateCell(product: viewModel.getProduct(index: index))
         return cell
+    }
+}
+
+extension HomeViewController: UITableViewDelegate {
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        let product = viewModel.getProduct(index: indexPath.row)
+        let detailsViewController = DetailsViewController(with: product)
+        detailsViewController.title = "Descrição do Produto"
+        navigationItem.backButtonTitle = String()
+        navigationController?.pushViewController(detailsViewController, animated: true)
+        tableView.deselectRow(at: indexPath, animated: true)
+    }
+}
+
+extension UIImageView {
+    func loadFrom(URLAddress: String) {
+        guard let image = UIImage(systemName: "photo") else {
+            return
+        }
+        guard let url = URL(string: URLAddress) else {
+            self.image = image
+            return
+        }
+        
+        DispatchQueue.main.async { [weak self] in
+            do {
+                let imageData = try Data(contentsOf: url)
+                if let loadedImage = UIImage(data: imageData) {
+                        self?.image = loadedImage
+                }
+            } catch {
+                self?.image = image
+            }
+        }
     }
 }

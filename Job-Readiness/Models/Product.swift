@@ -14,4 +14,6 @@ struct Product {
     let description1: String
     let description2: String
     let productImage: UIImageView
+    let urlThumbnail: String
+    let urlImage: String
 }

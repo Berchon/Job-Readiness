@@ -12,22 +12,26 @@ class HomeViewModel {
     weak var delegate: HomeViewControllerProtocol?
     
     var products: [Product] = []
-    let service = Service()
-    var token: String = "APP_USR-4081270747201707-091815-08159017fdd5af49b9ef186aa81e8137-1169220274"
+    private let service: DataSourceProtocol
+    var token: String = "APP_USR-4081270747201707-092315-1cb7e67bbefbcf615bb5e978aa3a3e1a-1169220274"
     var categories = CategoriesModel()
     var productsByCategory: ProductsModel = {
         return ProductsModel(content: [])
     }()
     var productsDetails = ProductsDetailsModel()
+    var requestError: APIError? = nil
 
     init() {
-        
+        let session = URLSession(configuration: .default)
+        let network = NetworkManager(session: session)
+        service = ApiDataSource(network: network)
     }
     
     func clearPropertiesFromApi() {
         categories = CategoriesModel()
         productsByCategory.content = []
         productsDetails = ProductsDetailsModel()
+        return
     }
     
     func count() -> Int {
@@ -38,122 +42,138 @@ class HomeViewModel {
         return products[index]
     }
     
-    func searchProducts(category: String) {
-        clearPropertiesFromApi()
-        let group = DispatchGroup()
-        
-        group.enter()
-        getCategory(category: category) {
-            group.leave()
-        }
-        
-        group.notify(queue: .main) {
-            if let id = self.categories.first?.categoryId {
-                self.searchProductsWithCategoryId(using: id)
+    func searchProducts(category: String, target: UIViewController) {
+        DispatchQueue.main.async {
+            self.clearPropertiesFromApi()
+            let group = DispatchGroup()
+
+            group.enter()
+            self.getCategory(category: category, target: target) {
+                group.leave()
+            }
+            group.wait()
+
+            if let error = self.requestError {
+                Notification.show(title: "Erro em buscar dados",
+                                  message: "Erro ao buscar o ID da categoria digitada.\n\nCódigo do Erro: \(error).",
+                                  target: target)
+                return
+            }
+            guard let id = self.categories.first?.categoryId else {
+                return
+            }
+            
+            group.enter()
+            self.getProducts(categoryId: id, target: target) {
+                group.leave()
+            }
+            group.wait()
+
+            if let error = self.requestError {
+                Notification.show(title: "Erro em buscar dados",
+                                  message: "Erro ao buscar os produtos da categoria digitada.\n\nCódigo do Erro: \(error).",
+                                  target: target)
+                return
+            }
+            
+            group.enter()
+            self.getProductsDetails(with: self.productsByCategory, target: target) {
+                group.leave()
+            }
+
+            group.notify(queue: .main) {
+                if let error = self.requestError {
+                    Notification.show(title: "Erro em buscar dados",
+                                      message: "Erro ao buscar os detalhes dos produtos.\n\nCódigo do Erro: \(error).",
+                                      target: target)
+                } else {
+                    self.configureTableViewData()
+                }
             }
         }
     }
-    
-    func searchProductsWithCategoryId(using id: String) {
-        let group = DispatchGroup()
 
-        group.enter()
-        self.getProducts(categoryId: id) {
-            group.leave()
-        }
-        
-        group.notify(queue: .main) {
-            self.searchProductsDetailsUsing(productsByCategory: self.productsByCategory)
-        }
-    }
-    
-    func searchProductsDetailsUsing(productsByCategory: ProductsModel) {
-        let group = DispatchGroup()
-
-        group.enter()
-        self.getProductsDetails(with: productsByCategory) {
-            group.leave()
-        }
-        
-        group.notify(queue: .main) {
-            self.configureTableViewData()
-        }
-    }
-    
     func configureTableViewData() {
         products = productsDetails.map({ product in
             let name = product.body.title
             let price = String(product.body.price)
             let description1 = product.body.subtitle ?? String("---")
             let description2 = product.body.descriptions.first ?? String("---")
-            let productImage = UIImageView(image: UIImage(systemName: "giftcard.fill"))
-            let product = Product(name: name, price: price, description1: description1, description2: description2, productImage: productImage)
+            let productImage = UIImageView(image: UIImage(systemName: "photo"))
+            let urlThambnail = product.body.thumbnail
+            let urlImage = product.body.pictures.first?.url ?? String()
+            let product = Product(name: name, price: price, description1: description1, description2: description2, productImage: productImage, urlThumbnail: urlThambnail, urlImage: urlImage)
 
             return product
         })
         delegate?.reloadData()
     }
 
-    func getToken() {
-        service.getToken { authorization, error in
-            if let error = error {
-                print("eu tenho um erro")
-                print(error)
-//                Notification.show(title: "App ID TG inválida", message: "Erro ao gerar o token de acesso!", target: target)
+    func getToken(target: UIViewController) {
+        let group = DispatchGroup()
+
+        group.enter()
+        service.fetchToken { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let authorization):
+                    print(authorization)
+                    self.token = authorization.accessToken
+                case .failure:
+                    self.token = String()
+                }
+                group.leave()
             }
-            
-            if let authorization = authorization {
-                self.token = authorization.accessToken
-                print("Buscou o token")
+        }
+        group.notify(queue: .main) {
+            if self.token.isEmpty {
+                Notification.show(title: "App ID TG inválida", message: "Erro ao gerar o token de acesso!", target: target)
             }
         }
     }
     
-    func getCategory(category: String, completion: @escaping () -> Void) {
-        service.getCategory(category: category, authorization: token) { categories, error in
-            if let error = error {
-                print("eu tenho um erro nas categorias")
-                print(error)
-            }
-            
-            if let categories = categories {
+    func getCategory(category: String, target: UIViewController, completion: @escaping () -> Void) {
+        service.fetchCategory(category: category, authorization: token) { result in
+            switch result {
+            case .success(let categories):
+                self.requestError = nil
                 self.categories = categories
-                print("Buscou categorias")
+            case .failure(let error):
+                self.requestError = error as? APIError
+                self.categories = []
             }
             completion()
         }
     }
     
-    func getProducts(categoryId: String, completion: @escaping () -> Void) {
-        service.getProducts(categoryId: categoryId, authorization: token) { products, error in
-            if let error = error {
-                print("Eu tenho um erro nos produtos")
-                print(error)
-            }
-            
-            if let products = products {
+    func getProducts(categoryId: String, target: UIViewController, completion: @escaping () -> Void) {
+        service.fetchProducts(categoryId: categoryId, authorization: token) { result in
+            switch result {
+            case .success(let products):
+                self.requestError = nil
                 self.productsByCategory = products
-                print("Buscou os produtos")
+            case .failure(let error):
+                self.requestError = error as? APIError
+                self.productsByCategory.content = []
             }
             completion()
         }
     }
     
-    func getProductsDetails(with productsByCategory: ProductsModel, completion: @escaping () -> Void) {
+    func getProductsDetails(with productsByCategory: ProductsModel, target: UIViewController, completion: @escaping () -> Void) {
         let ids = productsByCategory.content.map { product in
             return product.id
         }
         let params = ids.joined(separator: ",")
-
-        service.getProductsDetails(with: params, authorization: token) { productsDetail, error in
-            if let error = error {
-                print("Eu tenho um erro nos detalhes")
-                print(error)
-            }
-            
-            if let productsDetail = productsDetail {
-                self.productsDetails = productsDetail
-                print("Buscou os detalhes dos produtos")
+        
+        service.fetchProductsDetails(with: params, authorization: token) { result in
+            switch result {
+            case .success(let productsDetails):
+                self.requestError = nil
+                self.productsDetails = productsDetails
+            case .failure(let error):
+                self.requestError = error as? APIError
+                self.productsDetails = []
             }
             completion()
         }

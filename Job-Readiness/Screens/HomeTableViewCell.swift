@@ -36,6 +36,6 @@ class HomeTableViewCell: UITableViewCell {
         priceLabel.text = product.price
         descriptionLabel.text = product.description1
         description2Label.text = product.description2
-//        productImage = product.productImage
+        productImage.loadFrom(URLAddress: product.urlThumbnail)
     }
 }
